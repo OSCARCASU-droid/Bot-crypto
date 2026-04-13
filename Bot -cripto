@@ -1,72 +1,65 @@
 import requests
 import pandas as pd
-import os
 
-TOKEN = os.getenv("TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+# ===== CONFIG =====
+TOKEN = "TU_TOKEN_TELEGRAM"
+CHAT_ID = "TU_CHAT_ID"
+
+SYMBOL = "XRPUSDT"
+INTERVAL = "1h"
+LIMIT = 100
+
+# ===== FUNCIONES =====
 
 def enviar_mensaje(texto):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": CHAT_ID,
-        "text": texto
-    })
+    requests.post(url, data={"chat_id": CHAT_ID, "text": texto})
+
 
 def obtener_datos():
-    url = "https://api.binance.com/api/v3/klines"
-    params = {
-        "symbol": "XRPUSDT",
-        "interval": "5m",
-        "limit": 100
-    }
-    data = requests.get(url, params=params).json()
-
+    url = f"https://api.binance.com/api/v3/klines?symbol={SYMBOL}&interval={INTERVAL}&limit={LIMIT}"
+    data = requests.get(url).json()
+    
     df = pd.DataFrame(data, columns=[
         "time","open","high","low","close","volume",
-        "ct","qv","n","tb","tq","ignore"
+        "close_time","qav","trades","tbbav","tbqav","ignore"
     ])
-
+    
     df["close"] = df["close"].astype(float)
     return df
 
-# 📊 RSI
-def calcular_rsi(df, periodo=14):
+
+def calcular_rsi(df, period=14):
     delta = df["close"].diff()
-    subida = delta.clip(lower=0)
-    bajada = -delta.clip(upper=0)
-
-    media_subida = subida.rolling(periodo).mean()
-    media_bajada = bajada.rolling(periodo).mean()
-
-    rs = media_subida / media_bajada
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    
+    rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
+    
     return rsi
 
-# 📈 EMA
-def calcular_ema(df, periodo):
-    return df["close"].ewm(span=periodo).mean()
 
-def analizar(df):
+def estrategia(df):
     df["RSI"] = calcular_rsi(df)
-    df["EMA20"] = calcular_ema(df, 20)
-    df["EMA50"] = calcular_ema(df, 50)
+    df["MA"] = df["close"].rolling(window=20).mean()
+    
+    ultimo = df.iloc[-1]
+    
+    if ultimo["RSI"] < 30 and ultimo["close"] > ultimo["MA"]:
+        return "🟢 COMPRA"
+    elif ultimo["RSI"] > 70 and ultimo["close"] < ultimo["MA"]:
+        return "🔴 VENTA"
+    else:
+        return None
 
-    ultima = df.iloc[-1]
 
-    # 🟢 Señal alcista
-    if ultima["RSI"] < 30 and ultima["EMA20"] > ultima["EMA50"]:
-        return "🟢 COMPRA (RSI bajo + tendencia alcista)"
-
-    # 🔴 Señal bajista
-    if ultima["RSI"] > 70 and ultima["EMA20"] < ultima["EMA50"]:
-        return "🔴 VENTA (RSI alto + tendencia bajista)"
-
-    return None
+# ===== MAIN =====
 
 def main():
     df = obtener_datos()
-    señal = analizar(df)
-
+    señal = estrategia(df)
+    
     if señal:
         precio = df["close"].iloc[-1]
         mensaje = f"{señal}\n💰 XRP: {precio}"
@@ -74,6 +67,7 @@ def main():
         print("Señal enviada:", mensaje)
     else:
         print("Sin señal")
+
 
 if __name__ == "__main__":
     main()
